@@ -8,6 +8,12 @@ const port =  process.env.PORT || 3002
 const md5 = require('md5')
 const crypto = require('crypto');
 const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
+const csv = require('csv-parser');
+
+// const upload = multer({ dest: 'uploads/' });
+// const upload = multer({ dest: 'uploads/', limits: { fileSize: 1000000 }, fileFilter: fileFilter }).single('file');
 
 
 
@@ -569,6 +575,7 @@ app.put('/UpdateProgram', (req, res) => {
     const program_details = req.body.program_details; 
     const program_lead = req.body.program_lead; 
     const program_member = req.body.program_member; 
+    const status = 'IN-PROGRESS'
 
     conn.query("SELECT * FROM program_management WHERE pid = ?", [pid], (err, rows) => {
         if (err) {
@@ -584,7 +591,7 @@ app.put('/UpdateProgram', (req, res) => {
             });
         } else {
             // pid does not exist, insert new record
-            conn.query("INSERT INTO program_management (program_title, start, end, place, program_details, program_lead, program_member) VALUES (?,?,?,?,?,?,?)", [program_title, start, end, place, program_details, program_lead, program_member], (err, result) => {
+            conn.query("INSERT INTO program_management (program_title, start, end, place, program_details, program_lead, program_member, status) VALUES (?,?,?,?,?,?,?,?)", [program_title, start, end, place, program_details, program_lead, program_member, status], (err, result) => {
                 if(err){
                     throw err;
                 }else{
@@ -623,35 +630,161 @@ app.delete('/DeleteProgram', (req, res) => {
    });
 })
 
+
+app.put('/CompleteProgram', (req, res) => {
+
+    // POST : http://localhost:3002/CompleteProgram
+   // {
+   //     "pid": 1
+   // }     
+
+   const pid = req.body.pid;
+   conn.query("SELECT * FROM program_management WHERE pid = ?", [pid], (err, rows) => {
+       if (err) {
+           throw err;
+       } else if (rows.length > 0) {
+        const status = 'COMPLETE'
+        conn.query("UPDATE program_management SET status = ? WHERE pid = ?", [status,pid], (err, result) => {
+            if (err) {
+                throw err;
+            } else {
+                res.send('Program has been completed successfully from the database');
+            }
+        });
+        
+       } else {
+           // Email exists, delete record
+           res.send('Program does not exist in the database');   
+       }
+   });
+})
+
+app.put('/InCompleteProgram', (req, res) => {
+
+    // POST : http://localhost:3002/InCompleteProgram
+   // {
+   //     "pid": 1
+   // }     
+
+   const pid = req.body.pid;
+   conn.query("SELECT * FROM program_management WHERE pid = ?", [pid], (err, rows) => {
+       if (err) {
+           throw err;
+       } else if (rows.length > 0) {
+        const status = 'IN-PROGRESS'
+        conn.query("UPDATE program_management SET status = ? WHERE pid = ?", [status,pid], (err, result) => {
+            if (err) {
+                throw err;
+            } else {
+                res.send('Program has been set to IN-PROGRESS successfully from the database');
+            }
+        });
+        
+       } else {
+           // Email exists, delete record
+           res.send('Program does not exist in the database');   
+       }
+   });
+})
+
+
+app.post('/AssignProgramFaculty', (req, res) => {
+
+    // POST : http://localhost:3002/AssignProgramFaculty
+    // {
+    //     "fid" : 2, 
+    //     "pid" : 3
+    // }
+
+    const fid = req.body.fid; 
+    const pid = req.body.pid; 
+
+    conn.query("SELECT * FROM program_management WHERE pid = ?", [pid], (err, rows) => {
+        if (err) {
+            throw err;
+        } else if (rows.length > 0) {
+            conn.query("SELECT * FROM faculty WHERE fid = ?", [fid], (err, frows) => {
+                if (err) {
+                    throw err;
+                } else if (frows.length > 0) {
+                    conn.query("SELECT * FROM assign_program_faculty WHERE pid = ?", [pid], (err, arows) => {
+                        if (err) {
+                            throw err;
+                        } else if (arows.length > 0) {
+                            // pid already exists in assign_program_faculty table
+                            const existingFid = arows[0].fid;
+                            if (existingFid !== fid) {
+                                // pid already exists with different fid, do not insert new record
+                                res.send('pid already exists with different fid in assign_program_faculty table');
+                            } else {
+                                // pid and fid already exist in assign_program_faculty table, no need to insert new record
+                                res.send('pid and fid already exist in assign_program_faculty table');
+                            }
+                        } else {
+                            // insert new record in assign_program_faculty table
+                            conn.query("INSERT INTO assign_program_faculty (fid, pid) VALUES (?, ?)", [fid, pid], (err, result) => {
+                                if (err) {
+                                    throw err;
+                                } else {
+                                    res.send(result);
+                                }
+                            });
+                        }
+                    });
+                } else {
+                    res.send('faculty does not exist in the database');
+                }
+            });
+        } else {
+            res.send('Program does not exist in the database');
+        }
+    });
+});
+
+app.post('/UploadProgramParticipants', (req, res) => {
+    const uploading_participants = req.body.uploading_participants
+    const csvFilePath = 'booking.csv';
+    csv()
+        .fromFile(csvFilePath)
+        .then((data) => {
+            // loop through the data
+            data.forEach((row) => {
+                const pid = row.pid;
+                const fullname = row.fullname;
+                const email = row.email;
+                const contact = row.contact;
+
+                // check if the pid already exists in the program_management table
+                conn.query("SELECT * FROM program_management WHERE pid = ?", [pid], (err, rows) => {
+                    if (err) {
+                        throw err;
+                    } else if (rows.length > 0) {
+                        console.log(`pid ${pid} already exists in program_management table, skipping...`);
+                    } else {
+                        // insert new record into the program_management table
+                        conn.query("INSERT INTO program_participant (pid, fullname, email, contact) VALUES (?, ?, ?, ?)", [pid, fullname, email, contact], (err, result) => {
+                            if (err) {
+                                throw err;
+                            } else {
+                                console.log(`Inserted new record with pid ${pid} into program_management table`);
+                            }
+                        });
+                    }
+                });
+            });
+        })
+        .catch((err) => {
+            console.log(err);
+        });
+});
+
+
 //EVERYTHING ABOUT PROGRAM : START
 
 // UPLOADING CERTIFICATE : START
 
 
-// Set up storage for file uploads
-const storage = multer.memoryStorage();
-
-const upload = multer({ storage: storage });
-
-// Handle file upload
-app.post('/UploadCertificate', upload.single('file'), function(req, res) {
-  // Get file data
-  const name = req.file.originalname;
-  const type = req.file.mimetype;
-  const data = req.file.buffer;
-  
-  // Insert file data into MySQL database
-  const query = 'INSERT INTO certificates (name, type, data) VALUES (?, ?, ?)';
-  connection.query(query, [name, type, data], function(error, results, fields) {
-    if (error) throw error;
-    
-    // Send response to client
-    res.json({ success: true });
-  });
-});
-
-
-  // UPLOADING CERTIFICATE : START
+// UPLOADING CERTIFICATE : START
 
 
 app.listen(port, ()=> {
